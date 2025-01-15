@@ -7,6 +7,10 @@
 #include <elf.h>
 #include <errno.h>
 
+extern int system_call();
+extern int startup(int argc, char **argv, void (*start)());
+int startup(int argc, char **argv, void (*start)());
+
 void print_phdr_details(Elf32_Phdr *phdr, int i);
 void load_phdr(Elf32_Phdr *phdr, int fd);
 
@@ -64,9 +68,7 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
         if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
         if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
         
-        int mapping = MAP_PRIVATE | MAP_FIXED; // Removed MAP_FIXED
-
-        // Debugging prints
+        int mapping = MAP_PRIVATE | MAP_FIXED; 
 
         // Align vaddr and offset to page boundary
         void *vaddr = (void *)(phdr->p_vaddr & 0xfffff000); 
@@ -83,7 +85,7 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
         void* map = mmap(vaddr, phdr->p_memsz + padding, prot, mapping, fd, offset);
         if (map == MAP_FAILED) {
             fprintf(stderr, "mmap failed: %s\n", errno_name(errno));
-            return ;
+            return;
         }
 
         // If mmap succeeded, print the program header details
@@ -191,18 +193,53 @@ int main(int argc, char **argv) {
     }
 
     // Process the program headers
-     if (foreach_phdr(map_start, print_phdr_details, 0) < 0) {
-        fprintf(stderr, "Failed to iterate over program headers.\n");
-    }
-    printf("\n");
+    // if (foreach_phdr(map_start, print_phdr_details, 0) < 0) {
+      //  fprintf(stderr, "Failed to iterate over program headers.\n");
+    //}
+    //printf("\n");
     /*the if above is to check 1, the function below is to check the loader*/
     foreach_phdr(map_start, load_phdr, fd);
-
 
 
     // Clean up
     munmap(map_start, st.st_size);
     close(fd);
 
+    Elf32_Ehdr* elf_head = (Elf32_Ehdr*) map_start;
+    if(argc < 2){
+        fprintf(stderr, "No program to load.\n");
+        return -1;
+    }
+    if(argv+1 == NULL){
+        fprintf(stderr, "No program to load.\n");
+        return -1;
+    }
+    printf("Starting program...\n");
+    startup(argc-1, argv+1, (void *)(elf_head->e_entry));
+    printf("Program finished.\n");
     return 0;
 }
+/*
+Task 2c
+After successfully completing the previous function, you should now pass control
+to the loaded program. To achieve this, we provide the code in assembly language (startup.s), 
+you should examine the code we provide. You may download its object file startup.o. 
+You need to execute the loaded program using our function startup(), 
+with the following signature:
+
+int startup(int argc, char **argv, void (*start)());
+
+and start is the entry point of your executable.
+
+Your loader should be able to load and run all code from previous labs which uses the
+system_call interface, provided that they are compiled with the -m32 flag and 
+according to the compilation instructions in the system calls lab.
+However, first try it for a program that does not expect command-line arguments, 
+such as this file: loadme. In case of a bug note the following:
+
+The "arg" of foreach_phdr is used correctly - it should be the file descriptor of an open file.
+The file/s that the segments are mapped from must remain open and mapped to memory.
+The correct segments are mapped to memory and flags are set appropriately.
+startup is used correctly as following:
+startup(argc-1, argv+1, (void *)(elf_head->e_entry))
+*/
