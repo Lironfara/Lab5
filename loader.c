@@ -56,39 +56,32 @@ const char *errno_name(int errnum) {
     }
 }
 
-void load_phdr(Elf32_Phdr *phdr, int fd) {
-    if(phdr == MAP_FAILED){
-        fprintf(stderr, "Failed to get program header table.\n");
-        return;
-    }
 
+void load_phdr(Elf32_Phdr *phdr, int fd) {
     if (phdr->p_type == PT_LOAD) {
         int prot = PROT_NONE;
         if (phdr->p_flags & PF_R) prot |= PROT_READ;
         if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
         if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
         
-        int mapping = MAP_PRIVATE | MAP_FIXED; 
+        int mapping = MAP_PRIVATE | MAP_FIXED;
 
-        // Align vaddr and offset to page boundary
-        void *vaddr = (void *)(phdr->p_vaddr & 0xfffff000); 
-        unsigned int offset = phdr->p_offset & 0xfffff000;
-        unsigned int padding = phdr->p_vaddr & 0xfff; // Calculate padding
-
-        // Check if file descriptor is valid
-        if (fd == -1) {
-            perror("Invalid file descriptor");
-            return;
+        // Map the segment at the correct virtual address
+        void *addr = mmap((void *)phdr->p_vaddr, phdr->p_memsz,
+                         prot, mapping, fd, phdr->p_offset);
+        
+        if (addr == MAP_FAILED) {
+            fprintf(stderr, "mmap failed for segment: %s\n", errno_name(errno));
+            exit(1);
         }
 
-        // mmap to load the segment
-        void* map = mmap(vaddr, phdr->p_memsz + padding, prot, mapping, fd, offset);
-        if (map == MAP_FAILED) {
-            fprintf(stderr, "mmap failed: %s\n", errno_name(errno));
-            return;
+        // Initialize BSS if memsz > filesz
+        if (phdr->p_memsz > phdr->p_filesz) {
+            size_t bss_size = phdr->p_memsz - phdr->p_filesz;
+            void *bss_start = (void *)(phdr->p_vaddr + phdr->p_filesz);
+            memset(bss_start, 0, bss_size);
         }
 
-        // If mmap succeeded, print the program header details
         print_phdr_details(phdr, 0);
     }
 }
@@ -198,12 +191,14 @@ int main(int argc, char **argv) {
     //}
     //printf("\n");
     /*the if above is to check 1, the function below is to check the loader*/
+    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
     foreach_phdr(map_start, load_phdr, fd);
-
+     void (*entry_point)() = (void (*)())(ehdr->e_entry);
 
     // Clean up
     munmap(map_start, st.st_size);
-    close(fd);
+    printf("Starting program at address 0x%x...\n", (unsigned int)entry_point);
+
 
     Elf32_Ehdr* elf_head = (Elf32_Ehdr*) map_start;
     if(argc < 2){
@@ -214,10 +209,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "No program to load.\n");
         return -1;
     }
-    printf("Starting program...\n");
-    startup(argc-1, argv+1, (void *)(elf_head->e_entry));
+
+    startup(argc-1, argv+1, entry_point);
     printf("Program finished.\n");
     return 0;
+    //2c, 2d both needs startup to run, but 2c has fallen with seg fault. Nur inshalla you will help us.
 }
 /*
 Task 2c
