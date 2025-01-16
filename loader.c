@@ -59,7 +59,7 @@ const char *errno_name(int errnum) {
 
 void load_phdr(Elf32_Phdr *phdr, int fd) {
     if (phdr->p_type == PT_LOAD) {
-        int prot = PROT_NONE;
+        int prot = PROT_NONE; //0
         if (phdr->p_flags & PF_R) prot |= PROT_READ;
         if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
         if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
@@ -67,22 +67,20 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
         int mapping = MAP_PRIVATE | MAP_FIXED;
 
         // Map the segment at the correct virtual address
-        void *addr = mmap((void *)phdr->p_vaddr, phdr->p_memsz,
-                         prot, mapping, fd, phdr->p_offset);
-        
-        if (addr == MAP_FAILED) {
-            fprintf(stderr, "mmap failed for segment: %s\n", errno_name(errno));
-            exit(1);
-        }
+        void *addr =  (void *)(phdr->p_vaddr&0xfffff000);
+        int offset = phdr->p_offset & 0xfffff000;
+        int padding = phdr->p_vaddr & 0xfff;
 
-        // Initialize BSS if memsz > filesz
-        if (phdr->p_memsz > phdr->p_filesz) {
-            size_t bss_size = phdr->p_memsz - phdr->p_filesz;
-            void *bss_start = (void *)(phdr->p_vaddr + phdr->p_filesz);
-            memset(bss_start, 0, bss_size);
-        }
+        void* map = mmap(addr, phdr->p_memsz + padding, prot, mapping, fd, offset);
 
+        if (map == MAP_FAILED) {
+            fprintf(stderr, "Failed to map segment at 0x%x: %s\n",
+                    phdr->p_vaddr, errno_name(errno));
+            return;
+        }
         print_phdr_details(phdr, 0);
+        
+        
     }
 }
 
@@ -186,14 +184,15 @@ int main(int argc, char **argv) {
     }
 
     // Process the program headers
-    // if (foreach_phdr(map_start, print_phdr_details, 0) < 0) {
-      //  fprintf(stderr, "Failed to iterate over program headers.\n");
-    //}
-    //printf("\n");
+     if (foreach_phdr(map_start, print_phdr_details, 0) < 0) {
+        fprintf(stderr, "Failed to iterate over program headers.\n");
+    }
+    printf("\n");
     /*the if above is to check 1, the function below is to check the loader*/
-    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
     foreach_phdr(map_start, load_phdr, fd);
-     void (*entry_point)() = (void (*)())(ehdr->e_entry);
+
+    Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
+    void (*entry_point)() = (void (*)())(ehdr->e_entry);
 
     // Clean up
     munmap(map_start, st.st_size);
@@ -213,29 +212,5 @@ int main(int argc, char **argv) {
     startup(argc-1, argv+1, entry_point);
     printf("Program finished.\n");
     return 0;
-    //2c, 2d both needs startup to run, but 2c has fallen with seg fault. Nur inshalla you will help us.
+
 }
-/*
-Task 2c
-After successfully completing the previous function, you should now pass control
-to the loaded program. To achieve this, we provide the code in assembly language (startup.s), 
-you should examine the code we provide. You may download its object file startup.o. 
-You need to execute the loaded program using our function startup(), 
-with the following signature:
-
-int startup(int argc, char **argv, void (*start)());
-
-and start is the entry point of your executable.
-
-Your loader should be able to load and run all code from previous labs which uses the
-system_call interface, provided that they are compiled with the -m32 flag and 
-according to the compilation instructions in the system calls lab.
-However, first try it for a program that does not expect command-line arguments, 
-such as this file: loadme. In case of a bug note the following:
-
-The "arg" of foreach_phdr is used correctly - it should be the file descriptor of an open file.
-The file/s that the segments are mapped from must remain open and mapped to memory.
-The correct segments are mapped to memory and flags are set appropriately.
-startup is used correctly as following:
-startup(argc-1, argv+1, (void *)(elf_head->e_entry))
-*/
